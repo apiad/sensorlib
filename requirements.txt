@@ -1,0 +1,6 @@
+spacy
+pandas
+jellyfish
+streamlit
+transformers
+pytorch
