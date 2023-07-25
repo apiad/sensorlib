@@ -1,8 +1,7 @@
-from typing import List
 import streamlit as st
 import spacy
 from transformers import pipeline
-from sensorlib import Term, taxonomy, top_k_terms, select_terms
+from sensorlib import Annotation, taxonomy, top_k_terms, select_terms, convert_to_brat
 
 
 st.set_page_config(page_title="Sensors", layout="wide", page_icon="🧠")
@@ -55,17 +54,28 @@ def extract_candidate_terms(sentence, count, _terms):
 
 
 def score_terms(sentence, top_terms, _classifier):
-    return _classifier(sentence, candidate_labels=[str(term) for term in top_terms], multi_label=True)
+    return _classifier(sentence, candidate_labels=[str(annotation.term) for annotation in top_terms], multi_label=True)
+
+
+annotations = []
 
 
 for sentence in sentences:
     st.info(sentence)
 
     with st.spinner("Extracting terms"):
-        top_terms: List[Term] = top_k_terms(sentence, terms, k_terms)
+        top_terms: list[Annotation] = top_k_terms(sentence, terms, k_terms)
         scores = score_terms(sentence.text, top_terms, classifier)
 
-    for term, score in select_terms(scores, threshold).items():
-        st.write(term, score)
+    for annotation, score in select_terms(top_terms, scores, threshold).items():
+        st.write(annotation.term.text, score)
+        annotation.score = score
+        annotations.append(annotation)
 
     st.json(scores, expanded=False)
+
+st.write("### Annotations")
+
+st.table([annotation.to_dict() for annotation in annotations])
+
+st.code(convert_to_brat(annotations))

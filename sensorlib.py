@@ -2,6 +2,8 @@ import pandas as pd
 import jellyfish
 import difflib
 
+from dataclasses import dataclass
+
 
 def taxonomy(path, nlp):
     data = pd.read_excel(path)
@@ -14,6 +16,9 @@ class Term:
         self.doc = nlp(term)
         self.categories = set(categories) - {self.term}
 
+    def __hash__(self) -> int:
+        return hash(str(self))
+
     @property
     def text(self):
         return self.term.lower()
@@ -23,6 +28,24 @@ class Term:
             return "%s (%s)" % (self.term, ", ".join(self.categories))
 
         return self.term
+
+
+@dataclass
+class Annotation:
+    score: float
+    term: Term
+    surface: str
+    start: int
+    end: int
+
+    def __hash__(self) -> int:
+        return hash((self.start, self.end))
+
+    def __eq__(self, __o: object) -> bool:
+        return isinstance(__o, Annotation) and (self.start, self.end) == (__o.start, __o.end)
+
+    def to_dict(self):
+        return dict(surface=self.surface, term=str(self.term), start=self.start, end=self.end, score=self.score)
 
 
 def similarity(root:Term, term:Term, return_all=False):
@@ -36,26 +59,27 @@ def similarity(root:Term, term:Term, return_all=False):
     if return_all :
         return result
 
-    return max(result)
+    return Annotation(score=max(result), term=term, surface=root.text, start=root[0].idx, end=root[0].idx+len(root.text))
 
 
-def top_k_similar(root, set, k=10):
-    sims = {term:similarity(root, term) for term in set}
-    return sorted(sims.items(), key=lambda t:t[1], reverse=True)[:k]
+def top_k_similar(root, set, k=10) -> list[Annotation]:
+    sims = [similarity(root, term) for term in set]
+    return sorted(sims, key=lambda t:t.score, reverse=True)[:k]
 
 
-def top_k_terms(sentence, taxonomy, k=10):
+def top_k_terms(sentence, taxonomy, k=10) -> list[Annotation]:
     top_n = {}
 
     for e in sentence.noun_chunks:
-        for term,w in top_k_similar(e, taxonomy, k):
-            if term not in top_n or top_n[term] < w:
-                top_n[term] = w
+        for ann in top_k_similar(e, taxonomy, k):
+            if ann not in top_n or top_n[ann] < ann.score:
+                top_n[ann] = ann.score
 
     return sorted(top_n, key=top_n.get, reverse=True)[:k]
 
 
-def select_terms(scores, threshold=0.5):
+def select_terms(terms, scores, threshold=0.5):
+    mapping = { str(term.term): term for term in terms }
     result = {}
     used = set()
 
@@ -69,4 +93,14 @@ def select_terms(scores, threshold=0.5):
             result[term] = score
             used.add(prefix)
 
-    return result
+    return { mapping[k]: v for k,v in result.items() }
+
+
+def convert_to_brat(annotations):
+    lines = []
+
+    for i, annotation in enumerate(annotations):
+        lines.append(f"T{i}\tKEYWORD\t{annotation.start} {annotation.end}\t{annotation.surface}")
+        lines.append(f"#{i}\tAnnotatorNotes T{i}\t{str(annotation.term)}")
+
+    return "\n".join(lines)
