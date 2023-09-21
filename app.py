@@ -1,28 +1,46 @@
+import spacy
 import streamlit as st
-import json
-from transformers import pipeline
+from streamlit.components.v1 import html
+
+from spacy.tokens import DocBin
+from spacy import displacy
 
 
 st.set_page_config(page_title="Sensors", layout="wide", page_icon="🧠")
 
 
-def load_jsonl(fname):
-    with open(fname) as fp:
-        return [json.loads(l) for l in fp]
+@st.cache_resource
+def load_model():
+    return spacy.load("Data/model-best")
 
 
 @st.cache_data
-def load_data():
-    train = load_jsonl("Data/anotacionesFinalTrain.jsonl")
-    eval = load_jsonl("Data/anotacionesFinalEval.jsonl")
-    test = load_jsonl("Data/anotacionesFinalTest.jsonl")
+def load_testing(_model):
+    return list(DocBin().from_disk("Data/test.spacy").get_docs(_model.vocab))
 
-    return train, eval, test
 
+with st.spinner("Loading model..."):
+    nlp = load_model()
+
+
+st.toast(f"Loaded spaCy model", icon="🌟")
 
 with st.spinner("Loading data..."):
-    train, eval, test = load_data()
+    testing = load_testing(nlp)
 
 
-with st.expander("Training"):
-    st.json(train)
+st.toast(f"Loaded {len(testing)} test sentences", icon="🌟")
+
+
+example = st.slider(
+    "Select example to visualize", min_value=0, max_value=len(testing) - 1
+)
+ground_truth = testing[example]
+
+st.write("### Ground truth")
+html(displacy.render(ground_truth, style="ent"))
+
+predicted = nlp(ground_truth.text)
+
+st.write("### Predicted")
+html(displacy.render(predicted, style="ent"))

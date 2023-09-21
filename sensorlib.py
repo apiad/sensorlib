@@ -104,3 +104,7 @@ def convert_to_brat(annotations):
         lines.append(f"#{i}\tAnnotatorNotes T{i}\t{str(annotation.term)}")
 
     return "\n".join(lines)
+
+
+class NerModel:
+    pass
