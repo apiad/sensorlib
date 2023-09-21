@@ -1,6 +1,10 @@
 spacy
+spacy-transformers
 pandas
 jellyfish
 streamlit
 transformers
 pytorch
+datasets
+evaluate
+seqeval
