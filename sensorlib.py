@@ -106,5 +106,10 @@ def convert_to_brat(annotations):
     return "\n".join(lines)
 
 
-class NerModel:
-    pass
+def spacy_to_brat(doc):
+    lines = []
+
+    for i, annotation in enumerate(doc.ents):
+        lines.append(f"T{i}\t{annotation.label_}\t{annotation.start} {annotation.end}\t{annotation.text}")
+
+    return "\n".join(lines)

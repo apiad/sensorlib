@@ -5,6 +5,8 @@ from streamlit.components.v1 import html
 from spacy.tokens import DocBin
 from spacy import displacy
 
+from sensorlib import spacy_to_brat
+
 
 st.set_page_config(page_title="Sensors", layout="wide", page_icon="🧠")
 
@@ -44,3 +46,5 @@ predicted = nlp(ground_truth.text)
 
 st.write("### Predicted")
 html(displacy.render(predicted, style="ent"))
+
+st.code(spacy_to_brat(predicted))
