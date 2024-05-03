@@ -1,115 +1,160 @@
-import pandas as pd
-import jellyfish
-import difflib
-
-from dataclasses import dataclass
-
-
-def taxonomy(path, nlp):
-    data = pd.read_excel(path)
-    return [Term(row[4], nlp, row[1], row[2], row[3]) for row in data.itertuples()]
+import json
+import re
+import numpy as np
+from pathlib import Path
+from mistralai.client import MistralClient
+from mistralai.exceptions import MistralAPIException
+from mistralai.models.chat_completion import ChatMessage
 
 
-class Term:
-    def __init__(self, term, nlp, *categories) -> None:
-        self.term = term
-        self.doc = nlp(term)
-        self.categories = set(categories) - {self.term}
+def build_taxonomy(fp):
+    categories = {}
+    lines = fp.readlines()
 
-    def __hash__(self) -> int:
-        return hash(str(self))
+    def parse(lines, i=0, level=0, parent="ROOT"):
+        if i >= len(lines):
+            return i
 
-    @property
-    def text(self):
-        return self.term.lower()
+        line = lines[i]
+        my_level = line.count(" ")
+        categories[line.strip()] = parent
 
-    def __str__(self):
-        if self.categories:
-            return "%s (%s)" % (self.term, ", ".join(self.categories))
+        if my_level < level:
+            return i
 
-        return self.term
+        i = parse(lines, i+1, level+1, line.strip())
+        i = parse(lines, i, level, parent)
 
+        return i+1
 
-@dataclass
-class Annotation:
-    score: float
-    term: Term
-    surface: str
-    start: int
-    end: int
-
-    def __hash__(self) -> int:
-        return hash((self.start, self.end))
-
-    def __eq__(self, __o: object) -> bool:
-        return isinstance(__o, Annotation) and (self.start, self.end) == (__o.start, __o.end)
-
-    def to_dict(self):
-        return dict(surface=self.surface, term=str(self.term), start=self.start, end=self.end, score=self.score)
+    parse(lines)
+    return categories
 
 
-def similarity(root:Term, term:Term, return_all=False):
-    spacy_sim = root.similarity(term.doc)
-    syntax_sim = jellyfish.jaro_winkler_similarity(root.text.lower(), term.text)
-    diff_sim = difflib.SequenceMatcher(None, root.text.lower(), term.text).ratio()
-    substr = 1 if term.text in root.text.split() else 0
+def parse_examples(path):
+    dataset = Path(path).glob("*.txt")
+    examples = []
 
-    result = spacy_sim, syntax_sim, diff_sim, substr
+    for txt_file in dataset:
+        ann_file = txt_file.with_suffix(".ann")
 
-    if return_all :
-        return result
+        with open(txt_file) as fp:
+            text = fp.read().strip()
 
-    return Annotation(score=max(result), term=term, surface=root.text, start=root[0].idx, end=root[0].idx+len(root.text))
+        with open(ann_file) as fp:
+            annotations = {}
 
+            for line in fp:
+                if line.startswith("T"):
+                    _, label, _, _, entity = line.strip().split(maxsplit=4)
+                    annotations[entity] = label
 
-def top_k_similar(root, set, k=10) -> list[Annotation]:
-    sims = [similarity(root, term) for term in set]
-    return sorted(sims, key=lambda t:t.score, reverse=True)[:k]
+        examples.append(dict(text=text, annotations=annotations))
 
-
-def top_k_terms(sentence, taxonomy, k=10) -> list[Annotation]:
-    top_n = {}
-
-    for e in sentence.noun_chunks:
-        for ann in top_k_similar(e, taxonomy, k):
-            if ann not in top_n or top_n[ann] < ann.score:
-                top_n[ann] = ann.score
-
-    return sorted(top_n, key=top_n.get, reverse=True)[:k]
+    return examples
 
 
-def select_terms(terms, scores, threshold=0.5):
-    mapping = { str(term.term): term for term in terms }
-    result = {}
-    used = set()
+def reply(client, prompt, model="open-mixtral-8x7b"):
+    messages = [ChatMessage(content=prompt, role="user")]
+    response = client.chat(
+        messages=messages, model=model, response_format=dict(type="json_object")
+    )
+    return json.loads(response.choices[0].message.content)
 
-    for term, score in zip(scores['labels'], scores['scores']):
-        if score < threshold:
+
+def embed(client: MistralClient, texts: list[str]):
+    return np.asarray(_embed(client, texts))
+
+
+def _embed(client: MistralClient, texts: list[str]):
+    if len(texts) < 20:
+        try:
+            embeddings = [e.embedding for e in client.embeddings("mistral-embed", texts).data]
+            return embeddings
+        except MistralAPIException:
+            if len(texts) < 4:
+                raise
+
+    n = len(texts) // 2
+    left = _embed(client, texts[:n])
+    right = _embed(client, texts[n:])
+
+    return left + right
+
+
+def get_k_shot(client, text, examples, embeddings, k):
+    x = embed(client, [text]).T
+    scores = np.dot(embeddings, x).flatten()
+    closest = np.argsort(scores)[-k:]
+    return [examples[i] for i in closest]
+
+
+PROMPT = """
+The following is a list of categories from a taxonomy of terms referring to technology.
+Your task is to extract relevant mentions of named entities from a text and classify them
+according to this taxonomy.
+
+# Terms
+
+{terms}
+- 99_OTHER
+
+# Examples
+
+{examples}
+
+# Output format
+
+Output your response in JSON format as shown in the example.
+
+# Input
+
+Text:
+{text}
+
+Answer:
+"""
+
+EXAMPLE_PROMPT = """
+Text:
+{text}
+
+Answer:
+{annotations}
+"""
+
+
+def build_prompt(text, categories, examples, trim_categories=False):
+    base_classes = categories.keys()
+
+    if trim_categories:
+        base_classes = set([ann for e in examples for ann in e['annotations'].values()])
+
+    base_classes = sorted(base_classes)
+
+    examples = [EXAMPLE_PROMPT.format(text=k['text'], annotations=json.dumps(k['annotations'], indent=2)) for k in examples]
+    prompt = PROMPT.format(text=text, terms="\n".join(f"- {term}" for term in base_classes), examples="\n".join(examples))
+    return prompt
+
+
+def convert_to_ann(text, annotations, categories):
+    result = []
+
+    for entity, label in annotations.items():
+        if label not in categories:
             continue
 
-        prefix, *_ = term.split("(")
+        idx = len(result)
+        parent = categories[label]
+        parent2 = categories.get(parent, "")
 
-        if prefix not in used:
-            result[term] = score
-            used.add(prefix)
+        for match in re.finditer(entity, text):
+            start, end = match.span()
 
-    return { mapping[k]: v for k,v in result.items() }
+            if f" {text} "[start-1].isalpha() or f" {text} "[end+1].isalpha():
+                continue
 
+            result.append(f"T{idx}\t{label} {start} {end}\t{entity}")
+            result.append(f"#{idx}\tAnnotatorNotes T{idx}\tCategoría: {parent}({parent2})")
 
-def convert_to_brat(annotations):
-    lines = []
-
-    for i, annotation in enumerate(annotations):
-        lines.append(f"T{i}\tKEYWORD\t{annotation.start} {annotation.end}\t{annotation.surface}")
-        lines.append(f"#{i}\tAnnotatorNotes T{i}\t{str(annotation.term)}")
-
-    return "\n".join(lines)
-
-
-def spacy_to_brat(doc):
-    lines = []
-
-    for i, annotation in enumerate(doc.ents):
-        lines.append(f"T{i}\t{annotation.label_}\t{annotation.start} {annotation.end}\t{annotation.text}")
-
-    return "\n".join(lines)
+    return "\n".join(result)

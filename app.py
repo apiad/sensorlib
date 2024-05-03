@@ -1,50 +1,96 @@
-import spacy
+import os
+import json
+from io import StringIO
+from dotenv import load_dotenv
+
 import streamlit as st
-from streamlit.components.v1 import html
+from mistralai.client import MistralClient
+import sensorlib
 
-from spacy.tokens import DocBin
-from spacy import displacy
-
-from sensorlib import spacy_to_brat
-
-
-st.set_page_config(page_title="Sensors", layout="wide", page_icon="🧠")
+load_dotenv()
 
 
 @st.cache_resource
-def load_model():
-    return spacy.load("Data/model-best")
+def build_llm():
+    return MistralClient(api_key=os.getenv("MISTRAL_API_KEY"))
 
 
-@st.cache_data
-def load_testing(_model):
-    return list(DocBin().from_disk("Data/test.spacy").get_docs(_model.vocab))
+llm = build_llm()
 
 
-with st.spinner("Loading model..."):
-    nlp = load_model()
+categories_fp = st.sidebar.file_uploader("Categories file", "txt")
+
+if categories_fp and st.sidebar.button("Build categories"):
+    fp = StringIO(categories_fp.getvalue().decode("utf8"))
+    st.session_state.categories = sensorlib.build_taxonomy(fp)
+
+if "categories" not in st.session_state:
+    st.error("Build the categories list first")
+    st.stop()
 
 
-st.toast(f"Loaded spaCy model", icon="🌟")
+categories = st.session_state.categories
 
-with st.spinner("Loading data..."):
-    testing = load_testing(nlp)
-
-
-st.toast(f"Loaded {len(testing)} test sentences", icon="🌟")
+with st.expander("Categories"):
+    st.json(categories)
 
 
-example = st.slider(
-    "Select example to visualize", min_value=0, max_value=len(testing) - 1
+examples_path = st.text_input(
+    "Training corpus path", "Datos Corpus/TECNOLOGIA/Anotaciones_v5_4_ITI"
 )
-ground_truth = testing[example]
 
-st.write("### Ground truth")
-html(displacy.render(ground_truth, style="ent"))
 
-predicted = nlp(ground_truth.text)
+@st.cache_data(show_spinner="Loading training set...")
+def parse_examples(examples_path):
+    return sensorlib.parse_examples(examples_path)
 
-st.write("### Predicted")
-html(displacy.render(predicted, style="ent"))
 
-st.code(spacy_to_brat(predicted))
+examples = parse_examples(examples_path)
+
+
+@st.cache_data(show_spinner="Computing embeddings...")
+def compute_embeddings(examples):
+    # hello
+    return sensorlib.embed(llm, [e["text"] for e in examples])
+
+
+embeddings = compute_embeddings(examples)
+
+with st.expander("Training corpus"):
+    example_id = st.number_input("Example ID", min_value=0, max_value=len(examples) - 1)
+    st.write(examples[example_id])
+    st.write(embeddings[example_id])
+
+
+input_text = st.text_area("Enter input text", examples[example_id]["text"], height=150)
+k_shot = st.sidebar.number_input("K-shot", min_value=0, value=5)
+
+
+@st.cache_data(show_spinner="Computing k-shot examples...")
+def get_k_shot(text, k):
+    k_shot_examples = sensorlib.get_k_shot(
+        llm, input_text, examples, embeddings, k=k + 1
+    )
+    return [e for e in k_shot_examples if e["text"] != text]
+
+
+k_shot_examples = get_k_shot(input_text, k_shot)
+
+with st.expander("K-shot examples"):
+    st.write(k_shot_examples)
+
+
+prompt = sensorlib.build_prompt(input_text, categories, k_shot_examples, trim_categories=st.sidebar.checkbox("Trim categories"))
+
+with st.expander("Full prompt"):
+    st.code(prompt)
+
+
+@st.cache_data(show_spinner="Calling LLM..")
+def call_llm(prompt):
+    return sensorlib.reply(llm, prompt)
+
+
+result = call_llm(prompt)
+st.code(sensorlib.convert_to_ann(input_text, result, categories))
+st.json(result)

@@ -176,7 +176,6 @@ pyrightconfig.json
 # End of https://www.toptal.com/developers/gitignore/api/python
 
 *.pdf
-*.ipynb
 results_example.json
 brat_anotaciones_industria
 IEEE_IA_Industria.xlsx
