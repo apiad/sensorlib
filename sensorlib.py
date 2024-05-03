@@ -1,4 +1,5 @@
 import json
+import string
 import re
 import numpy as np
 from pathlib import Path
@@ -151,7 +152,7 @@ def convert_to_ann(text, annotations, categories):
         for match in re.finditer(entity, text):
             start, end = match.span()
 
-            if f" {text} "[start-1].isalpha() or f" {text} "[end+1].isalpha():
+            if (f" {text}"[start] in string.ascii_letters) or (f"{text} "[end] in string.ascii_letters):
                 continue
 
             result.append(f"T{idx}\t{label} {start} {end}\t{entity}")
