@@ -180,3 +180,4 @@ results_example.json
 brat_anotaciones_industria
 IEEE_IA_Industria.xlsx
 .vscode/settings.json
+.streamlit/secrets.toml

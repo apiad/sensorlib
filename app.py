@@ -48,8 +48,9 @@ examples = parse_examples(examples_path)
 
 @st.cache_data(show_spinner="Computing embeddings...")
 def compute_embeddings(examples):
-    # hello
-    return sensorlib.embed(llm, [e["text"] for e in examples])
+    return sensorlib.embed(
+        llm, [e["text"] for e in examples], st.secrets.openai.embedding_model
+    )
 
 
 embeddings = compute_embeddings(examples)
@@ -67,7 +68,7 @@ k_shot = st.sidebar.number_input("K-shot", min_value=0, value=5)
 @st.cache_data(show_spinner="Computing k-shot examples...")
 def get_k_shot(text, k):
     k_shot_examples = sensorlib.get_k_shot(
-        llm, input_text, examples, embeddings, k=k + 1
+        llm, input_text, examples, st.secrets.openai.embedding_model, embeddings, k=k + 1
     )
     return [e for e in k_shot_examples if e["text"] != text]
 
@@ -91,7 +92,7 @@ with st.expander("Full prompt"):
 
 @st.cache_data(show_spinner="Calling LLM..")
 def call_llm(prompt):
-    return sensorlib.reply(llm, prompt)
+    return sensorlib.reply(llm, prompt, model=st.secrets.openai.llm_model)
 
 
 result = call_llm(prompt)

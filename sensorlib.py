@@ -4,7 +4,7 @@ import re
 import numpy as np
 from pathlib import Path
 from openai import OpenAI
-import streamlit as st
+
 
 def build_taxonomy(fp):
     categories = {}
@@ -21,10 +21,10 @@ def build_taxonomy(fp):
         if my_level < level:
             return i
 
-        i = parse(lines, i+1, level+1, line.strip())
+        i = parse(lines, i + 1, level + 1, line.strip())
         i = parse(lines, i, level, parent)
 
-        return i+1
+        return i + 1
 
     parse(lines)
     return categories
@@ -53,36 +53,41 @@ def parse_examples(path):
     return examples
 
 
-def reply(client, prompt, model=st.secrets.openai.llm_model):
-    messages = [{"role":st.secrets.openai.role,"content":prompt}]
+def reply(client, prompt, model):
+    messages = [{"role": "user", "content": prompt}]
     response = client.chat.completions.create(
         messages=messages, model=model, response_format=dict(type="json_object")
     )
     return json.loads(response.choices[0].message.content)
 
 
-def embed(client: OpenAI, texts: list[str]):
-    return np.asarray(_embed(client, texts))
+def embed(client: OpenAI, texts: list[str], model:str):
+    return np.asarray(_embed(client, texts, model))
 
 
-def _embed(client: OpenAI, texts: list[str]):
+def _embed(client: OpenAI, texts: list[str], model:str):
     if len(texts) < 20:
         try:
-            embeddings = [e.embedding for e in client.embeddings.create(input=texts,model=st.secrets.openai.embedding_model).data]
+            embeddings = [
+                e.embedding
+                for e in client.embeddings.create(
+                    input=texts, model=model
+                ).data
+            ]
             return embeddings
         except Exception:
             if len(texts) < 4:
                 raise
 
     n = len(texts) // 2
-    left = _embed(client, texts[:n])
-    right = _embed(client, texts[n:])
+    left = _embed(client, texts[:n], model)
+    right = _embed(client, texts[n:], model)
 
     return left + right
 
 
-def get_k_shot(client, text, examples, embeddings, k):
-    x = embed(client, [text]).T
+def get_k_shot(client, text, examples, embedding_model, embeddings, k):
+    x = embed(client, [text], embedding_model).T
     scores = np.dot(embeddings, x).flatten()
     closest = np.argsort(scores)[-k:]
     return [examples[i] for i in closest]
@@ -127,12 +132,21 @@ def build_prompt(text, categories, examples, trim_categories=False):
     base_classes = categories.keys()
 
     if trim_categories:
-        base_classes = set([ann for e in examples for ann in e['annotations'].values()])
+        base_classes = set([ann for e in examples for ann in e["annotations"].values()])
 
     base_classes = sorted(base_classes)
 
-    examples = [EXAMPLE_PROMPT.format(text=k['text'], annotations=json.dumps(k['annotations'], indent=2)) for k in examples]
-    prompt = PROMPT.format(text=text, terms="\n".join(f"- {term}" for term in base_classes), examples="\n".join(examples))
+    examples = [
+        EXAMPLE_PROMPT.format(
+            text=k["text"], annotations=json.dumps(k["annotations"], indent=2)
+        )
+        for k in examples
+    ]
+    prompt = PROMPT.format(
+        text=text,
+        terms="\n".join(f"- {term}" for term in base_classes),
+        examples="\n".join(examples),
+    )
     return prompt
 
 
@@ -150,10 +164,14 @@ def convert_to_ann(text, annotations, categories):
         for match in re.finditer(entity, text):
             start, end = match.span()
 
-            if (f" {text}"[start] in string.ascii_letters) or (f"{text} "[end] in string.ascii_letters):
+            if (f" {text}"[start] in string.ascii_letters) or (
+                f"{text} "[end] in string.ascii_letters
+            ):
                 continue
 
             result.append(f"T{idx}\t{label} {start} {end}\t{entity}")
-            result.append(f"#{idx}\tAnnotatorNotes T{idx}\tCategoría: {parent}({parent2})")
+            result.append(
+                f"#{idx}\tAnnotatorNotes T{idx}\tCategoría: {parent}({parent2})"
+            )
 
     return "\n".join(result)
