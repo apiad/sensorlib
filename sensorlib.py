@@ -3,10 +3,8 @@ import string
 import re
 import numpy as np
 from pathlib import Path
-from mistralai.client import MistralClient
-from mistralai.exceptions import MistralAPIException
-from mistralai.models.chat_completion import ChatMessage
-
+from openai import OpenAI
+import streamlit as st
 
 def build_taxonomy(fp):
     categories = {}
@@ -55,24 +53,24 @@ def parse_examples(path):
     return examples
 
 
-def reply(client, prompt, model="open-mixtral-8x7b"):
-    messages = [ChatMessage(content=prompt, role="user")]
-    response = client.chat(
+def reply(client, prompt, model=st.secrets.openai.llm_model):
+    messages = [{"role":st.secrets.openai.role,"content":prompt}]
+    response = client.chat.completions.create(
         messages=messages, model=model, response_format=dict(type="json_object")
     )
     return json.loads(response.choices[0].message.content)
 
 
-def embed(client: MistralClient, texts: list[str]):
+def embed(client: OpenAI, texts: list[str]):
     return np.asarray(_embed(client, texts))
 
 
-def _embed(client: MistralClient, texts: list[str]):
+def _embed(client: OpenAI, texts: list[str]):
     if len(texts) < 20:
         try:
-            embeddings = [e.embedding for e in client.embeddings("mistral-embed", texts).data]
+            embeddings = [e.embedding for e in client.embeddings.create(input=texts,model=st.secrets.openai.embedding_model).data]
             return embeddings
-        except MistralAPIException:
+        except Exception:
             if len(texts) < 4:
                 raise
 
