@@ -4,15 +4,14 @@ from io import StringIO
 from dotenv import load_dotenv
 
 import streamlit as st
-from mistralai.client import MistralClient
 import sensorlib
+from openai import OpenAI
 
 load_dotenv()
 
-
 @st.cache_resource
 def build_llm():
-    return MistralClient(api_key=os.getenv("MISTRAL_API_KEY"))
+    return OpenAI(base_url=st.secrets.openai.url, api_key=st.secrets.openai.key)
 
 
 llm = build_llm()
@@ -36,7 +35,7 @@ with st.expander("Categories"):
 
 
 examples_path = st.text_input(
-    "Training corpus path", "Datos Corpus/TECNOLOGIA/Anotaciones_v5_4_ITI"
+    "Training corpus path", "data/TECNOLOGIA/Anotaciones_v5_4_ITI"
 )
 
 
