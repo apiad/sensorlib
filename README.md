@@ -1,4 +1,27 @@
-# Instrucciones
+# Sensor de NER para dominio general
+
+Este sensor está implementado usando modelos de lenguaje y
+técnicas de prompt-engineering (k-shot prompting) para permitir
+su uso sin necesidad de entrenamiento o fine-tuning.
+
+Para ello es necesario acceder a un modelo de embeddings (BERT o superior) y un modelo de LLM (Gemma-3b o superior) que pueden ser
+utilizados desde un servicio o montados en una API local usando LM Studio <lmstudio.ai> o cualquier otro servidor de LLM local que provea
+una API compatible con OpenAI (todos lo hacen).
+
+La calidad de los resultados es muy dependiente del modelo LLM usado,
+con modelos más grandes se obtiene mejor precisión.
+
+Como primer paso se indexan y embeben todos los ejemplos entrenantes
+que servirán posteriormente para el k-shot.
+Luego se genera un prompt por cada ejemplo a extraer y se consulta al LLM.
+Finalmente se parsea la respuesta y se convierte a formato BRAT.
+
+Es muy importante ejecutar los modelos en GPU pues de lo contrario
+la respuesta es muy lenta.
+LM Studio provee soporte para correr los modelos total o parcialmente
+en GPU con facilidad.
+
+## Instrucciones generales
 
 Instalar las dependencias:
 
@@ -6,11 +29,20 @@ Instalar las dependencias:
 pip install -r requirements.txt
 ```
 
-Descargar el modelo de `spacy` necesario:
+## Para ejecutar el demo
+
+Configurar `.streamlit/secrets.toml`:
 
 ```
-spacy download en_core_web_lg
+[openai]
+
+url = "https://api.mistral.ai/v1/"
+key = "WiT9wnodUHLECpONpdRLtWo95ETu8MxU"
+embedding_model = "mistral-embed"
+llm_model = "open-mixtral-8x7b"
 ```
+
+> **NOTA:** Esta es una configuración de ejemplo que funciona con nuestro token de <mistral.ai>. Se puede usar para probar el demo, pero no para producción, pues tiene límite de gasto.
 
 Ejecutar la aplicación:
 
@@ -21,48 +53,44 @@ streamlit run app.py
 > **NOTA:** El código en `app.py` puede servir para entender como usar los métodos en `sensorlib.py`.
 > En `sensorlib.py` están refactorizados los métodos y funcionalidades necesarias.
 
-### NER en el corpus ISABIAL
+Visitar <localhost:8501> para ver el demo de reconocimiento de entidades usando LLMs.
 
-Visitar <localhost:8501> para ver el demo de reconocimiento de entidades en el corpus ISABIAL.
+## Ejecución con modelos locales
 
-### Keyword Extraction IEEE
+- Instalar LM Studio de <lmstudio.ai>.
+- Descargar desde LM Studio un modelo de LLM suficientemente bueno (hemos probado con `Gemma-3b` y `Llama3-7b`.)
+- Descargar desde LM Studio un modelo de embedding (cualquiera funciona.)
+- Activar la API de LM Studio (se puede hacer por CLI o en la UI).
 
-Visitar <localhost:8501/ieee_taxonomy> para ver el demo de extracción de keywords de la taxonomía IEEE.
+Para usar la aplicación demo, se debe configurar en `.streamlit/secrets.toml` con la URL y modelos locales.
 
-![](screenshot.png)
+Para usar la biblioteca `sensorlib.py` directamente, solamente es necesario pasar una instancia de `OpenAI` correctamente configurada.
 
-En `experiments.py` están los códigos de experimentación de este demo.
+## Workflow completo
 
-> **NOTA**: La primera vez que se ejecuta el código se debe descargar un modelo de `transformers` de 2GB aproximadamente. Esto puede demorar.
+En la biblioteca `sensorlib.py` está todo el código refactorizado para ser usado. Se separa en varias partes la funcionalidad para permitir debuggear y almacenar los resultados intermedios.
 
-## Entrenando el modelo de NER
+El listado de métodos a ejecutar en orden es el siguiente:
 
-Para entrenar el modelo de NER, primero hay que convertir los datos al formato de `spacy`:
+1. `build_taxonomy`: Procesar el archivo `CATEGORIAS.txt` correposdiente y obtener un diccionario en formato conveniente. Almacene esto mientras no cambie la taxonomía.
+2. `parse_examples`: Procesar los ejemplos entrenantes y obtener una reprsentación en forma de diccionario. Guarde esto mientras no cambie el training set.
+3. `embed`: Computar los embeddings de los ejemplos entrenantes. Guarde esto mientras no cambie el training set.
 
-```
-python3 isabial_to_spacy.py
-```
+Estos pasos son de preprocesamiento y pueden demorar de 5 a 10 minutos en función del modelo de embedding usado y el tamaño del training set, pero se pueden cachear.
 
-En la carpeta `Data`  aparecerán 3 archivos `*.spacy`.
+Luego, para el proceso de extracción de un nuevo texto.
 
-Luego hay dos opciones:
+1. `get_k_shot`: Obtener los ejemplos entrenantes más similares para el prompt.
+2. `build_prompt`: Construir el prompt para pasar al LLM.
+3. `reply`: Llamar al LLM y obtener la respuesta.
+4. `convert_to_ann`: Convertir la respuesta a formato ANN.
 
-### Modelo CPU (lento y malo)
+En función de la calidad del LLM usado, la respuesta en `reply` puede contener errores. En caso de no devolver un JSON correcto, generalmente funciona volver a ejecutar el `reply`. Esto no ocurre con modelos del estado del arte, e.g., `mixtral-8x7b` pero si puede ocurrir con modelos más pequeños.
 
-Es fácil, solo ejecutar:
+## Notas finales
 
-```
-python3 -m spacy train config_cpu.cfg --output ./Data
-```
+Este enfoque se escogió porque es adaptable fácilmente a cualquier taxonomía y dominio sin necesidad de re-entrenar y no requiere de un training set muy grande. Con pocos cientos de ejemplos bien variados es suficiente.
 
-### Modelo GPU
+Sin embargo, si se necesita una precisión mucho mayor, o si los modelos LLM escogidos no son muy potentes, será conveniente hacer fine-tuning. Llegado este punto podemos verlo.
 
-Necesitas instalar `cupy`. Esto es complicado, requiere CUDA y otras dependencias. Sigue las instrucciones [aquí](https://docs.cupy.dev/en/stable/install.html#).
-
-Una vez instalado y correctamente configurado `cupy`, ejecutar:
-
-```
-python3 -m spacy train config_gpu.cfg --gpu-id 0 --output ./Data
-```
-
-Donde `--gpu-id 0` apunta a la GPU a utilizar (0, 1, etc.)
+Por otro lado, si la infraestructura del cliente no permite ejecutar un LLM suficientemente bueno, podemos probar un enfoque solo basado en embeddings, pero necesariamente menor preciso. Igualmente, llegado este punto podemos analizarlo.
