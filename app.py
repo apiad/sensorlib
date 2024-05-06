@@ -1,5 +1,3 @@
-import os
-import json
 from io import StringIO
 from dotenv import load_dotenv
 
@@ -8,6 +6,7 @@ import sensorlib
 from openai import OpenAI
 
 load_dotenv()
+
 
 @st.cache_resource
 def build_llm():
@@ -79,7 +78,12 @@ with st.expander("K-shot examples"):
     st.write(k_shot_examples)
 
 
-prompt = sensorlib.build_prompt(input_text, categories, k_shot_examples, trim_categories=st.sidebar.checkbox("Trim categories"))
+prompt = sensorlib.build_prompt(
+    input_text,
+    categories,
+    k_shot_examples,
+    trim_categories=st.sidebar.checkbox("Trim categories"),
+)
 
 with st.expander("Full prompt"):
     st.code(prompt)
